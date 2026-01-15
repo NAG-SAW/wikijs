@@ -42,6 +42,7 @@
     "@graphql-tools/schema": "7.1.5",
     "@graphql-tools/utils": "7.1.5",
     "@joplin/turndown-plugin-gfm": "1.0.45",
+    "@node-saml/passport-saml": "5.1.0",
     "@root/csr": "0.8.1",
     "@root/keypairs": "0.10.3",
     "@root/pem": "1.0.4",
@@ -154,7 +155,6 @@
     "passport-oauth2": "1.8.0",
     "passport-okta-oauth": "0.0.1",
     "passport-openidconnect": "0.1.2",
-    "passport-saml": "3.2.4",
     "passport-slack-oauth2": "1.2.0",
     "passport-twitch-strategy": "2.2.0",
     "patch-package": "8.0.1",
@@ -336,9 +336,6 @@
     "write-file-webpack-plugin": "4.5.1",
     "xterm": "4.9.0",
     "zxcvbn": "4.4.2"
-  },
-  "resolutions": {
-    "passport-saml/**/xml-crypto": "2.1.6"
   },
   "browserslist": [
     "> 1%",
