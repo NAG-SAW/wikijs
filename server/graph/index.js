@@ -1,13 +1,12 @@
 const _ = require('lodash')
 const fs = require('fs')
-// const gqlTools = require('graphql-tools')
 const path = require('path')
 const autoload = require('auto-load')
-const PubSub = require('graphql-subscriptions').PubSub
+const { PubSub } = require('graphql-subscriptions')
 const { LEVEL, MESSAGE } = require('triple-beam')
 const Transport = require('winston-transport')
+const { makeExecutableSchema } = require('@graphql-tools/schema')
 const { createRateLimitTypeDef } = require('graphql-rate-limit-directive')
-// const { GraphQLUpload } = require('graphql-upload')
 
 /* global WIKI */
 
@@ -65,10 +64,14 @@ class LiveTrailLogger extends Transport {
 
 WIKI.logger.add(new LiveTrailLogger({}))
 
-WIKI.logger.info(`GraphQL Schema: [ OK ]`)
-
-module.exports = {
+const schema = makeExecutableSchema({
   typeDefs,
   resolvers,
   schemaDirectives
+})
+
+WIKI.logger.info(`GraphQL Schema: [ OK ]`)
+
+module.exports = {
+  schema
 }

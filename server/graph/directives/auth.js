@@ -1,7 +1,9 @@
-const { SchemaDirectiveVisitor } = require('graphql-tools')
+const { SchemaDirectiveVisitor } = require('@graphql-tools/utils')
 const { defaultFieldResolver } = require('graphql')
 const _ = require('lodash')
 
+// TODO: Migrate SchemaDirectiveVisitor to allow @graphql-tools > v8
+// This enables update of graphql-rate-limit as well
 class AuthDirective extends SchemaDirectiveVisitor {
   visitObject(type) {
     this.ensureFieldsWrapped(type)

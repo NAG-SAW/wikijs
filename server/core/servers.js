@@ -2,10 +2,45 @@ const fs = require('fs-extra')
 const http = require('http')
 const https = require('https')
 const { ApolloServer } = require('apollo-server-express')
+const { execute, subscribe } = require('graphql')
+const { SubscriptionServer } = require('subscriptions-transport-ws')
+const { ApolloServerPluginLandingPageDisabled } = require('apollo-server-core')
 const Promise = require('bluebird')
 const _ = require('lodash')
 const jwt = require('jsonwebtoken')
 const cookie = require('cookie')
+
+const ApolloServerPluginLandingPageApolloSandbox = {
+  async serverWillStart() {
+    return {
+      async renderLandingPage() {
+        const html = `
+<!DOCTYPE html>
+<html>
+  <head>
+  </head>
+  <style>
+    html, body, iframe {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+  <body style="margin: 0;">
+    <div style="width: 100%; height: 100%;" id='embedded-sandbox'></div>
+    <script src="https://embeddable-sandbox.cdn.apollographql.com/v2/embeddable-sandbox.umd.production.min.js"></script>
+    <script>
+      new window.EmbeddedSandbox({
+        target: '#embedded-sandbox',
+        initialEndpoint: 'http://localhost:${WIKI.config.port}/graphql',
+      });
+    </script>
+  </body>
+</html>`
+        return { html }
+      }
+    }
+  }
+}
 
 /* global WIKI */
 
@@ -13,17 +48,63 @@ module.exports = {
   servers: {
     graph: null,
     http: null,
-    https: null
+    https: null,
+    subscription: null
   },
   connections: new Map(),
   le: null,
+  schema: null,
+
+  createSubscriptionServer (server) {
+    return SubscriptionServer.create({
+      schema: this.schema,
+      execute,
+      subscribe,
+      onConnect: (connectionParams, webSocket) => {
+        let token = _.get(connectionParams, 'token', null)
+
+        if (!token) {
+          const cookieHeader = _.get(webSocket, 'upgradeReq.headers.cookie', '')
+          if (cookieHeader) {
+            const cookies = cookie.parse(cookieHeader)
+            token = cookies.jwt || null
+          }
+        }
+
+        if (!token) {
+          throw new Error('Unauthorized')
+        }
+
+        try {
+          const user = jwt.verify(token, WIKI.config.certs.public, {
+            audience: WIKI.config.auth.audience,
+            issuer: 'urn:wiki.js',
+            algorithms: ['RS256']
+          })
+
+          if (!_.includes(user.permissions, 'manage:system')) {
+            throw new Error('Forbidden')
+          }
+
+          return { user }
+        } catch (err) {
+          throw new Error('Unauthorized')
+        }
+      }
+    }, {
+      server,
+      path: '/graphql-subscriptions'
+    })
+  },
   /**
    * Start HTTP Server
    */
   async startHTTP () {
     WIKI.logger.info(`HTTP Server on port: [ ${WIKI.config.port} ]`)
     this.servers.http = http.createServer(WIKI.app)
-    this.servers.graph.installSubscriptionHandlers(this.servers.http)
+
+    // Add Subscription Server
+    this.servers.subscription = this.createSubscriptionServer(this.servers.http)
 
     this.servers.http.listen(WIKI.config.port, WIKI.config.bindIP)
     this.servers.http.on('error', (error) => {
@@ -85,7 +166,9 @@ module.exports = {
       return process.exit(1)
     }
     this.servers.https = https.createServer(tlsOpts, WIKI.app)
-    this.servers.graph.installSubscriptionHandlers(this.servers.https)
+
+    // Add Subscription Server for HTTPS
+    this.createSubscriptionServer(this.servers.https)
 
     this.servers.https.listen(WIKI.config.ssl.port, WIKI.config.bindIP)
     this.servers.https.on('error', (error) => {
@@ -122,44 +205,17 @@ module.exports = {
    */
   async startGraphQL () {
     const graphqlSchema = require('../graph')
+    this.schema = graphqlSchema.schema
     this.servers.graph = new ApolloServer({
-      ...graphqlSchema,
-      context: ({ req, res }) => ({ req, res }),
-      subscriptions: {
-        onConnect: (connectionParams, webSocket) => {
-          let token = _.get(connectionParams, 'token', null)
-
-          if (!token) {
-            const cookieHeader = _.get(webSocket, 'upgradeReq.headers.cookie', '')
-            if (cookieHeader) {
-              const cookies = cookie.parse(cookieHeader)
-              token = cookies.jwt || null
-            }
-          }
-
-          if (!token) {
-            throw new Error('Unauthorized')
-          }
-
-          try {
-            const user = jwt.verify(token, WIKI.config.certs.public, {
-              audience: WIKI.config.auth.audience,
-              issuer: 'urn:wiki.js',
-              algorithms: ['RS256']
-            })
-
-            if (!_.includes(user.permissions, 'manage:system')) {
-              throw new Error('Forbidden')
-            }
-
-            return { user }
-          } catch (err) {
-            throw new Error('Unauthorized')
-          }
-        },
-        path: '/graphql-subscriptions'
-      }
+      schema: this.schema,
+      plugins: [
+        process.env.NODE_ENV === 'production' ?
+          ApolloServerPluginLandingPageDisabled() :
+          ApolloServerPluginLandingPageApolloSandbox
+      ],
+      context: ({ req, res }) => ({ req, res })
     })
+    await this.servers.graph.start()
     this.servers.graph.applyMiddleware({ app: WIKI.app, cors: false })
   },
   /**
@@ -182,6 +238,10 @@ module.exports = {
    */
   async stopServers () {
     this.closeConnections()
+    if (this.servers.subscription) {
+      this.servers.subscription.close()
+      this.servers.subscription = null
+    }
     if (this.servers.http) {
       await Promise.fromCallback(cb => { this.servers.http.close(cb) })
       this.servers.http = null
