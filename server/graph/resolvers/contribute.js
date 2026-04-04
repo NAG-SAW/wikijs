@@ -1,3 +1,4 @@
+// TODO: Replace request-promise with something else, deprecated package
 const request = require('request-promise')
 const _ = require('lodash')
 
