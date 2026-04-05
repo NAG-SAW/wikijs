@@ -63,6 +63,7 @@ type PageQuery {
     mode: PageTreeMode!
     locale: String!
     includeAncestors: Boolean
+    multilingual: Boolean
   ): [PageTreeItem] @auth(requires: ["manage:system", "read:pages"])
 
   links(

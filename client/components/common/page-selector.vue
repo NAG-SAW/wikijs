@@ -276,6 +276,7 @@ export default {
     },
     async fetchFolders (item) {
       this.searchLoading = true
+      // TODO: Add multilingual navigation feature here as well
       const resp = await this.$apollo.query({
         query: gql`
           query ($parent: Int!, $mode: PageTreeMode!, $locale: String!) {

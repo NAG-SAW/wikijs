@@ -13,7 +13,7 @@
       :right='$vuetify.rtl'
       )
       vue-scroll(:ops='scrollStyle')
-        nav-sidebar(:color='$vuetify.theme.dark ? `grey darken-4-d4` : `primary`', :items='sidebarDecoded', :nav-mode='navMode')
+        nav-sidebar(:color='$vuetify.theme.dark ? `grey darken-4-d4` : `primary`', :items='sidebarDecoded', :nav-mode='navMode', :nav-multilingual='navMultilingual')
 
     v-fab-transition(v-if='navMode !== `NONE`')
       v-btn(
@@ -471,6 +471,10 @@ export default {
     navMode: {
       type: String,
       default: 'MIXED'
+    },
+    navMultilingual: {
+      type: Boolean,
+      default: false
     },
     commentsEnabled: {
       type: Boolean,

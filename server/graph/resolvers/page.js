@@ -173,8 +173,8 @@ module.exports = {
     async singleByPath(obj, args, context, info) {
       let page = await WIKI.models.pages.getPageFromDb({
         path: args.path,
-        locale: args.locale,
-      });
+        locale: args.locale
+      })
       if (page) {
         if (WIKI.auth.checkAccess(context.req.user, ['manage:pages', 'delete:pages'], {
           path: page.path,
@@ -249,8 +249,6 @@ module.exports = {
     async tree (obj, args, context, info) {
       let curPage = null
 
-      if (!args.locale) { args.locale = WIKI.config.lang.code }
-
       if (args.path && !args.parent) {
         curPage = await WIKI.models.knex('pageTree').first('parent', 'ancestors').where({
           path: args.path,
@@ -263,8 +261,12 @@ module.exports = {
         }
       }
 
+      let parent = await WIKI.models.knex('pageTree').first('path', 'isFolder', 'pageId').where({ id: args.parent })
+      let parents = parent ? await WIKI.models.knex('pageTree').where({ path: parent.path }) : []
+
       const results = await WIKI.models.knex('pageTree').where(builder => {
-        builder.where('localeCode', args.locale)
+        // Get results over all locales if multilingual option is set
+        if (!args.multilingual) builder.where('localeCode', args.locale)
         switch (args.mode) {
           case 'FOLDERS':
             builder.andWhere('isFolder', true)
@@ -276,13 +278,23 @@ module.exports = {
         if (!args.parent || args.parent < 1) {
           builder.whereNull('parent')
         } else {
+          // Include parent in results
           builder.where('parent', args.parent)
+          // Check special case: Parent is a folder without associated page, so we look in other locales if such a page might exist
+          if (args.multilingual && parent && parent.isFolder && !parent.pageId) {
+            builder.orWhere('path', parent.path)
+          }
+          // If we have a parent that is translated, check subpages of those as well
+          if (args.multilingual && parents) {
+            builder.orWhereIn('parent', _.map(parents, 'id'))
+          }
+          // Include all other ancestors. We ignore the special case from above for these (for now)
           if (args.includeAncestors && curPage && curPage.ancestors.length > 0) {
             builder.orWhereIn('id', _.isString(curPage.ancestors) ? JSON.parse(curPage.ancestors) : curPage.ancestors)
           }
         }
       }).orderBy([{ column: 'isFolder', order: 'desc' }, 'title'])
-      return results.filter(r => {
+      const visiblePages = results.filter(r => {
         return WIKI.auth.checkAccess(context.req.user, ['read:pages'], {
           path: r.path,
           locale: r.localeCode
@@ -292,6 +304,46 @@ module.exports = {
         parent: r.parent || 0,
         locale: r.localeCode
       }))
+      if (!args.multilingual) return visiblePages
+
+      // If multilingual option is set, we prune duplicate entries on path; Keep those where locale == args.locale if possible
+      // Special case: folder without page with locale == args.locale AND page in different locale exists -> keep both (frontend should deduplicate this)
+      const result = []
+      const seenPaths = new Map() // path -> index in result
+      for (const r of visiblePages) {
+        const existingIndex = seenPaths.get(r.path)
+        if (existingIndex === undefined) {
+          seenPaths.set(r.path, result.length)
+          result.push(r)
+        } else {
+          const e = result[existingIndex]
+          const isSpecialCase = e.isFolder !== r.isFolder && (e.locale === args.locale || r.locale === args.locale)
+          if (isSpecialCase && !!r.pageId === !!e.pageId) {
+            // Keep both entries for special case if both have a page
+            result.push(r)
+          } else if (isSpecialCase) {
+            // Only p has a page, while f is a folder exclusivly. Merge them.
+            const f = e.isFolder ? e : r
+            const p = e.isFolder ? r : e
+            result[existingIndex] = {
+              id: f.id,
+              path: f.path, // identical with p.path
+              title: p.locale === args.locale ? p.title : f.title,
+              isFolder: true,
+              pageId: p.pageId,
+              parent: f.parent,
+              locale: p.locale,
+              __typename: 'PageTreeItem'
+            }
+          } else {
+            // Deduplication: prefer args.locale
+            if (r.locale === args.locale && e.locale !== args.locale) {
+              result[existingIndex] = r
+            }
+          }
+        }
+      }
+      return result
     },
     /**
      * FETCH PAGE LINKS

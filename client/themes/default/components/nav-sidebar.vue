@@ -50,21 +50,29 @@
           v-list-item-avatar(size='18', :style='`padding-left: ` + (idx * 8) + `px; width: auto; margin: 0 5px 0 0;`')
             v-icon(small) mdi-folder-open
           v-list-item-title {{ item.title }}
+          v-list-item-icon(v-if='currentParent.locale !== locale && item.id > 0', style='min-width:auto;')
+            v-chip(color='grey', small, label, dark) {{currentParent.locale.toUpperCase()}}
         v-divider.mt-2
-        v-list-item.mt-2(v-if='currentParent.pageId > 0', :href='`/` + currentParent.locale + `/` + currentParent.path', :key='`directorypage-` + currentParent.id', :input-value='path === currentParent.path')
+        v-list-item.mt-2(v-if='currentParentPage', :href='`/` + currentParentPage.locale + `/` + currentParentPage.path', :key='`directorypage-` + currentParentPage.id', :input-value='path === currentParentPage.path')
           v-list-item-avatar(size='24')
             v-icon mdi-text-box
-          v-list-item-title {{ currentParent.title }}
+          v-list-item-title {{ currentParentPage.title }}
+          v-list-item-icon(v-if='currentParentPage.locale !== locale', style='min-width:auto;')
+            v-chip(color='grey', small, label, dark) {{currentParentPage.locale.toUpperCase()}}
         v-subheader.pl-4 {{$t('common:sidebar.currentDirectory')}}
       template(v-for='item of currentItems')
         v-list-item(v-if='item.isFolder', :key='`childfolder-` + item.id', @click='fetchBrowseItems(item)')
           v-list-item-avatar(size='24')
             v-icon mdi-folder
           v-list-item-title {{ item.title }}
+          v-list-item-icon(v-if='item.locale !== locale', style='min-width:auto;')
+            v-chip(color='grey', small, label, dark) {{item.locale.toUpperCase()}}
         v-list-item(v-else, :href='`/` + item.locale + `/` + item.path', :key='`childpage-` + item.id', :input-value='path === item.path')
           v-list-item-avatar(size='24')
             v-icon mdi-text-box
           v-list-item-title {{ item.title }}
+          v-list-item-icon(v-if='item.locale !== locale', style='min-width:auto;')
+            v-chip(color='grey', small, label, dark) {{item.locale.toUpperCase()}}
 </template>
 
 <script>
@@ -91,6 +99,10 @@ export default {
     navMode: {
       type: String,
       default: 'MIXED'
+    },
+    navMultilingual: {
+      type: Boolean,
+      default: false
     }
   },
   data() {
@@ -101,6 +113,7 @@ export default {
         id: 0,
         title: '/ (root)'
       },
+      currentParentPage: null,
       parents: [],
       loadedCache: []
     }
@@ -115,6 +128,23 @@ export default {
       window.localStorage.setItem('navPref', mode)
       if (mode === `browse` && this.loadedCache.length < 1) {
         this.loadFromCurrentPath()
+      }
+    },
+    updateCurrentParentPage() {
+      this.currentParentPage = this.currentParent.pageId > 0 ? this.currentParent : null
+      if (this.navMultilingual) {
+        // Check for additional entries for folders with assoiated page in different language
+        // If one is found, use it as currentParentPage
+        this.currentItems = this.currentItems.filter(r => {
+          if (r.path === this.currentParent.path && r.id !== this.currentParent.id) {
+            if (this.currentParentPage) console.warn('Found page for current parent while one already exists?!')
+            this.currentParentPage = r
+            return false
+          } else if (r.id === this.currentParent.id) {
+            return false
+          }
+          return true
+        })
       }
     },
     async fetchBrowseItems (item) {
@@ -144,9 +174,9 @@ export default {
 
       const resp = await this.$apollo.query({
         query: gql`
-          query ($parent: Int, $locale: String!) {
+          query ($parent: Int, $locale: String!, $multilingual: Boolean) {
             pages {
-              tree(parent: $parent, mode: ALL, locale: $locale) {
+              tree(parent: $parent, mode: ALL, locale: $locale, multilingual: $multilingual) {
                 id
                 path
                 title
@@ -161,20 +191,22 @@ export default {
         fetchPolicy: 'cache-first',
         variables: {
           parent: item.id,
+          multilingual: this.navMultilingual,
           locale: this.locale
         }
       })
       this.loadedCache = _.union(this.loadedCache, [item.id])
       this.currentItems = _.get(resp, 'data.pages.tree', [])
+      this.updateCurrentParentPage()
       this.$store.commit(`loadingStop`, 'browse-load')
     },
     async loadFromCurrentPath() {
       this.$store.commit(`loadingStart`, 'browse-load')
       const resp = await this.$apollo.query({
         query: gql`
-          query ($path: String, $locale: String!) {
+          query ($path: String, $locale: String!, $multilingual: Boolean) {
             pages {
-              tree(path: $path, mode: ALL, locale: $locale, includeAncestors: true) {
+              tree(path: $path, mode: ALL, locale: $locale, includeAncestors: true, multilingual: $multilingual) {
                 id
                 path
                 title
@@ -189,6 +221,7 @@ export default {
         fetchPolicy: 'cache-first',
         variables: {
           path: this.path,
+          multilingual: this.navMultilingual,
           locale: this.locale
         }
       })
@@ -215,6 +248,7 @@ export default {
 
       this.loadedCache = [curPage.parent]
       this.currentItems = _.filter(items, ['parent', curPage.parent])
+      this.updateCurrentParentPage()
       this.$store.commit(`loadingStop`, 'browse-load')
     },
     goHome () {
